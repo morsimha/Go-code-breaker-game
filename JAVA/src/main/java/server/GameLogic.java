@@ -7,16 +7,28 @@ public class GameLogic {
     private final Random random = new Random();
 
     public int validateGuess(String input) throws IllegalArgumentException {
-        try {
-            int guess = Integer.parseInt(input);
+        if (input == null) {
+            throw new IllegalArgumentException("Input is null, please enter a valid number between 1 and 100.");
+        }
+
+        try
+        {
+            // Trim any leading/trailing spaces just to be safe
+            int guess = Integer.parseInt(input.trim());
+
+            // Check the numeric range
             if (guess < 1 || guess > 100) {
                 throw new IllegalArgumentException("Number out of range, please guess between 1 and 100.");
             }
+
             return guess;
-        } catch (NumberFormatException e) {
+        }
+        catch (NumberFormatException e)
+        {
             throw new IllegalArgumentException("Invalid input, please enter a number.");
         }
     }
+
 
     public boolean checkGuessCorrectness(int guess) {
         return guess == SECRET_NUMBER;
