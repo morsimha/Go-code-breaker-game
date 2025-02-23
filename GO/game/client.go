@@ -16,7 +16,7 @@ func StartClient(address string) error {
 	}
 	defer conn.Close()
 
-	fmt.Println("Connected to the game server as a single player.")
+	fmt.Println("Welcome to the Code Breaker Game! Enter a code between 1000 and 9999.")
 
 	// Create a reader to capture input from stdin
 	reader := bufio.NewReader(os.Stdin)
@@ -24,7 +24,7 @@ func StartClient(address string) error {
 	// Start the game loop
 	for {
 		// Prompt the user to enter their guess
-		fmt.Print("Enter your guess (number) or 'exit' to quit: ")
+		fmt.Print("Enter your guess (secret code) or 'exit' to quit: ")
 		guess, err := reader.ReadString('\n')
 		if err != nil {
 			return fmt.Errorf("error reading input: %v", err)

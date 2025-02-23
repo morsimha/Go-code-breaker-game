@@ -17,17 +17,18 @@ class ClientHandler extends Thread {
         try (BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
              PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true)) {
 
-            out.println("Welcome to the Guessing Game! Enter a number between 1 and 100.");
+            out.println("Welcome to the Code Breaker Game! Enter a code between 1000 and 9999.");
             String inputLine;
+            int secretCode = gameLogic.generateSecretCode();
 
             while ((inputLine = in.readLine()) != null) {
                 try {
+                    out.println("Enter your guess (secret code) or 'exit' to quit: ");
                     int guess = gameLogic.validateGuess(inputLine);
-                    boolean isCorrect = gameLogic.checkGuessCorrectness(guess);
                     String prefix = "";
-//                     String prefix = gameLogic.generatePrefix(guess);
+//                     String prefix = gameLogic.generateTimestampPrefix();
 
-                    if (isCorrect) {
+                    if (secretCode == guess) {
                         out.println(prefix + " Congratulations! You guessed correctly!");
                         break;
                     } else {

@@ -44,8 +44,8 @@ func StartServer() {
 		} else {
 			// Check if the guess matches the correct answer
 			var response, prefix string
-			if CheckGuessCorrectness(numGuess) {
-				// prefix = GeneratePrefix()
+			if GenerateSecretCode() == numGuess {
+				// prefix = GenerateTimestampPrefix()
 				response = "Congratulations! You guessed the correct number!"
 			} else {
 				response = "Try again!"

@@ -8,17 +8,17 @@ import (
 
 func TestValidateGuess(t *testing.T) {
 	/* Example inputs:
-	valid: "007", "81", " 10  "
+	valid: "007123", "1181", " 1022  "
 	invalid: "$", "-15", " "
 	*/
 
-	guess, err := ValidateGuess("20")
+	guess, err := ValidateGuess("2000")
 	assert.NoError(t, err)
-	assert.Equal(t, 20, guess)
+	assert.Equal(t, 2000, guess)
 
 }
 
 func TestCheckGuessCorrectness(t *testing.T) {
-	isCorrect := CheckGuessCorrectness(10)
-	assert.Equal(t, isCorrect, false)
+	secretCode := GenerateSecretCode()
+	assert.Equal(t, secretCode, 1111)
 }

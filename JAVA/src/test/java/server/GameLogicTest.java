@@ -8,6 +8,15 @@ class GameLogicTest {
 
 //    @Test
 //    void testValidateGuess() {
-//        assertEquals(10, gameLogic.validateGuess("10"));
+//	/* Example inputs:
+//	valid: "007123", "1181", " 1022  "
+//	invalid: "$", "-15", " "
+//	*/
+//        assertEquals(10, gameLogic.validateGuess("1000"));
+//    }
+
+//    @Test
+//    void testGenerateSecretCode() {
+//        assertEquals(1111, gameLogic.generateCode());
 //    }
 }
