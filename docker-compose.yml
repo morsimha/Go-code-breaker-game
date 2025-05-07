@@ -10,11 +10,22 @@ services:
       - "8080:8080"
     command: ["./mygame", "server"]
 
-  client:
+  client1:
     build:
       context: .
       dockerfile: Dockerfile.client
-    container_name: game-client
+    container_name: game-client1
+    depends_on:
+      - server
+    stdin_open: true
+    tty: true
+    command: ["./myclient", "client"]
+
+  client2:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    container_name: game-client2
     depends_on:
       - server
     stdin_open: true

@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: game-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: game-server
+  template:
+    metadata:
+      labels:
+        app: game-server
+    spec:
+      containers:
+        - name: game-server
+          image: your-dockerhub-username/go-code-breaker:latest
+          ports:
+            - containerPort: 8080
+          command: ["./mygame", "server"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: game-server-service
+spec:
+  selector:
+    app: game-server
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+  type: NodePort

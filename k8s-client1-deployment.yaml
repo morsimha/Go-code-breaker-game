@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: game-client1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: game-client1
+  template:
+    metadata:
+      labels:
+        app: game-client1
+    spec:
+      containers:
+        - name: game-client1
+          image: your-dockerhub-username/go-game-client:latest
+          command: ["./myclient", "client"]

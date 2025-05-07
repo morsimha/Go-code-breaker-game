@@ -1,9 +1,9 @@
 package main
 
 import (
+	"ccs_interview/game"
 	"log"
 	"os"
-	"ccs_interview/game" // Replace with your actual module name
 )
 
 func main() {
@@ -19,14 +19,12 @@ func main() {
 		log.Println("Starting server in multiplayer mode...")
 		game.StartServer()
 	case "client":
-		// Connect client to server
-		address := "localhost:8080"
-		
-		// If an address is provided, use it
+		address := "server:8080"
+		// If an address is provided, use it (e.g., "localhost:8080")
+		// Otherwise, default to "server:8080"
 		if len(os.Args) > 2 {
 			address = os.Args[2]
 		}
-		
 		log.Printf("Connecting to server at %s...\n", address)
 		err := game.StartClient(address)
 		if err != nil {
