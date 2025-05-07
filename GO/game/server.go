@@ -4,7 +4,11 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
+	"time"
 )
 
 type Player struct {
@@ -15,72 +19,227 @@ type Player struct {
 }
 
 type GameSession struct {
-	players       []*Player
-	currentPlayer int
-	secretCode    int
-	gameOver      bool
-	guessCount    int
-	mutex         sync.Mutex
+	players         []*Player
+	currentPlayer   int
+	secretCode      int
+	gameOver        bool
+	guessCount      int
+	mutex           sync.Mutex
+	gameStarted     bool
+	maxPlayers      int
+	acceptingPlayers bool
 }
 
 func StartServer() {
+	// Get the maximum number of players from environment variable or argument
+	// Default to 2 if not specified
+	maxPlayers := 2
+	if len(os.Args) > 2 {
+		if val, err := strconv.Atoi(os.Args[2]); err == nil && val > 1 {
+			maxPlayers = val
+		}
+	}
+
+	log.Printf("Starting server with support for %d players...", maxPlayers)
 	listener, err := net.Listen("tcp", "0.0.0.0:8080")
 	if err != nil {
 		log.Fatalf("Error starting server: %v", err)
 	}
 	defer listener.Close()
 
-	fmt.Println("Server started, waiting for players...")
-
-	// Create a new game session
-	session := &GameSession{
-		players:       make([]*Player, 0, 2),
-		currentPlayer: 0,
-		secretCode:    GenerateSecretCode(),
-		gameOver:      false,
-		guessCount:    0,
-	}
-
-	// Accept connections from two players
-	for i := 0; i < 2; i++ {
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Fatalf("Error accepting connection: %v", err)
+	for {
+		// Create a new game session
+		session := &GameSession{
+			players:         make([]*Player, 0, maxPlayers),
+			currentPlayer:   0,
+			secretCode:      GenerateSecretCode(),
+			gameOver:        false,
+			guessCount:      0,
+			gameStarted:     false,
+			maxPlayers:      maxPlayers,
+			acceptingPlayers: true,
 		}
-
-		player := &Player{
-			conn: conn,
-			id:   i + 1,
-			name: fmt.Sprintf("Player %d", i+1),
-		}
-
-		session.players = append(session.players, player)
-		fmt.Printf("%s has connected.\n", player.name)
-
-		// Send welcome message
-		writeToClient(conn, fmt.Sprintf("Welcome %s! Waiting for opponent...", player.name))
+		
+		log.Printf("New game session created. Waiting for up to %d players to connect...", maxPlayers)
+		
+		// Start accepting players in a separate goroutine
+		playersConnected := make(chan struct{})
+		go acceptPlayers(listener, session, playersConnected)
+		
+		// Wait until we have enough players to start or all player slots are filled
+		<-playersConnected
+		
+		// Run the game session
+		runGameSession(session)
 	}
-
-	// Start the game
-	startGame(session)
 }
 
-func startGame(session *GameSession) {
-	// Notify players that the game is starting
-	for _, player := range session.players {
-		writeToClient(player.conn, "\nBoth players have connected. Game is starting!")
-		writeToClient(player.conn, "Try to guess the 4-digit code. Enter your guess when it's your turn.")
+func acceptPlayers(listener net.Listener, session *GameSession, playersConnected chan struct{}) {
+	// Set a timer for max wait time (3 minutes)
+	timer := time.NewTimer(3 * time.Minute)
+	defer timer.Stop()
+	
+	// Channel to receive new connections
+	connChan := make(chan net.Conn)
+	
+	// Minimum players to start a game
+	minPlayers := 2
+	
+	// Start accepting connections in a separate goroutine
+	go func() {
+		for session.acceptingPlayers {
+			conn, err := listener.Accept()
+			if err != nil {
+				log.Printf("Error accepting connection: %v", err)
+				continue
+			}
+			connChan <- conn
+		}
+	}()
+	
+	// Start a ticker to check if we should start the game
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	
+	// Handle connections until we reach max players or the timer expires
+	for session.acceptingPlayers {
+		select {
+		case conn := <-connChan:
+			// New player connected
+			session.mutex.Lock()
+			if len(session.players) < session.maxPlayers && !session.gameStarted {
+				playerID := len(session.players) + 1
+				player := &Player{
+					conn: conn,
+					id:   playerID,
+					name: fmt.Sprintf("Player %d", playerID),
+					readyNext: false,
+				}
+				
+				session.players = append(session.players, player)
+				log.Printf("%s has connected. Total players: %d/%d", player.name, len(session.players), session.maxPlayers)
+				
+				// Send welcome message to the new player
+				writeToClient(conn, fmt.Sprintf("Welcome %s! Waiting for other players... (%d/%d connected)", 
+					player.name, len(session.players), session.maxPlayers))
+				
+				// Broadcast to other players that someone new joined
+				for _, p := range session.players {
+					if p.id != playerID {
+						writeToClient(p.conn, fmt.Sprintf("\n%s has joined the game. (%d/%d players connected)", 
+							player.name, len(session.players), session.maxPlayers))
+					}
+				}
+				
+				// Check if we have reached max players
+				if len(session.players) == session.maxPlayers {
+					session.acceptingPlayers = false
+					session.mutex.Unlock()
+					close(playersConnected)
+					return
+				}
+				
+				// Check if we have minimum players and should start a countdown
+				if len(session.players) >= minPlayers && !session.gameStarted {
+					// Broadcast that we have minimum players
+					broadcastMessage(session, fmt.Sprintf("\nMinimum players reached (%d/%d). Game will start in 30 seconds or when %d players connect.", 
+						len(session.players), session.maxPlayers, session.maxPlayers))
+					
+					// Start a countdown timer
+					go func() {
+						time.Sleep(30 * time.Second)
+						session.mutex.Lock()
+						if !session.gameStarted && len(session.players) >= minPlayers {
+							session.acceptingPlayers = false
+							session.mutex.Unlock()
+							close(playersConnected)
+						} else {
+							session.mutex.Unlock()
+						}
+					}()
+				}
+			} else {
+				// Game already started or max players reached, reject connection
+				writeToClient(conn, "Sorry, this game has already started or is full. Please try again later.")
+				conn.Close()
+			}
+			session.mutex.Unlock()
+			
+		case <-ticker.C:
+			// Check if we have minimum players to start
+			session.mutex.Lock()
+			if len(session.players) >= minPlayers && !session.gameStarted {
+				remaining := session.maxPlayers - len(session.players)
+				broadcastMessage(session, fmt.Sprintf("\nWaiting for up to %d more players. Game will start soon.", remaining))
+			}
+			session.mutex.Unlock()
+			
+		case <-timer.C:
+			// Max wait time exceeded
+			session.mutex.Lock()
+			if len(session.players) >= minPlayers {
+				// We have enough players, start the game
+				session.acceptingPlayers = false
+				session.mutex.Unlock()
+				close(playersConnected)
+				return
+			} else {
+				// Not enough players, reset the timer
+				session.mutex.Unlock()
+				timer.Reset(3 * time.Minute)
+			}
+		}
 	}
+}
 
+func runGameSession(session *GameSession) {
+	session.mutex.Lock()
+	if len(session.players) < 2 {
+		log.Println("Not enough players to start the game.")
+		for _, player := range session.players {
+			writeToClient(player.conn, "Not enough players to start the game. Please try again later.")
+			player.conn.Close()
+		}
+		session.mutex.Unlock()
+		return
+	}
+	session.gameStarted = true
+	session.acceptingPlayers = false
+	session.mutex.Unlock()
+	
+	// Notify players that the game is starting
+	broadcastMessage(session, "\nGame is starting with " + strconv.Itoa(len(session.players)) + " players!")
+	broadcastMessage(session, "Try to guess the 4-digit code. Players will take turns in order.")
+	
+	// Show player list
+	playerList := "\nPlayers in this game:"
+	for _, player := range session.players {
+		playerList += "\n- " + player.name
+	}
+	broadcastMessage(session, playerList)
+	
 	// Notify the first player that it's their turn
 	writeToClient(session.players[0].conn, "\nIt's your turn. Enter your guess:")
-	writeToClient(session.players[1].conn, "\nWaiting for Player 1 to make a guess...")
+	
+	// Notify other players they're waiting
+	for i, player := range session.players {
+		if i != 0 {
+			writeToClient(player.conn, "\nWaiting for Player 1 to make a guess...")
+		}
+	}
 
-	// Main game loop - handle player guesses
+	// Main game loop
 	for !session.gameOver {
-		currentPlayer := session.players[session.currentPlayer]
+		session.mutex.Lock()
+		currentPlayerIndex := session.currentPlayer
+		currentPlayer := session.players[currentPlayerIndex]
+		session.mutex.Unlock()
+		
 		handlePlayerGuess(session, currentPlayer)
 	}
+	
+	// When game is over, wait for player responses about restarting
+	handleGameRestart(session)
 }
 
 func handlePlayerGuess(session *GameSession, player *Player) {
@@ -95,7 +254,7 @@ func handlePlayerGuess(session *GameSession, player *Player) {
 
 	// Process the guess
 	guess := string(buffer[:n])
-	fmt.Printf("Received guess from %s: %s\n", player.name, guess)
+	log.Printf("Received guess from %s: %s", player.name, guess)
 
 	// Validate the guess
 	numGuess, err := ValidateGuess(guess)
@@ -112,35 +271,32 @@ func handlePlayerGuess(session *GameSession, player *Player) {
 	session.mutex.Unlock()
 
 	// Check if the guess is correct
-	var response string
 	if numGuess == session.secretCode {
 		// Game over - player wins
 		prefix := GenerateTimestampPrefix()
-		response = prefix + "Congratulations! You guessed the correct number!"
-		session.gameOver = true
+		response := prefix + "Congratulations! You guessed the correct number!"
+		writeToClient(player.conn, response)
 		
-		// Notify both players
-		broadcastMessage(session, fmt.Sprintf("\n%s guessed the correct code (%d) and won the game!", player.name, numGuess))
-		
-		// Ask if they want to play again
-		for _, p := range session.players {
-			writeToClient(p.conn, "GAME_OVER")
-			writeToClient(p.conn, "\nWould you like to play again? (yes/no)")
-		}
-		
-		// Handle restart logic in a separate goroutine
-		go handleGameRestart(session)
-	} else {
-		response = "Try again!"
-		
-		// Switch turns
 		session.mutex.Lock()
-		session.currentPlayer = (session.currentPlayer + 1) % 2
-		nextPlayer := session.players[session.currentPlayer]
+		session.gameOver = true
 		session.mutex.Unlock()
 		
-		// Notify both players about the guess and whose turn it is
-		otherPlayer := session.players[(session.currentPlayer+1)%2]
+		// Notify all players
+		broadcastMessage(session, fmt.Sprintf("\n%s guessed the correct code (%d) and won the game!", player.name, numGuess))
+		broadcastMessage(session, fmt.Sprintf("\nSecret code was: %d", session.secretCode))
+		broadcastMessage(session, fmt.Sprintf("\nTotal guesses: %d", totalGuesses))
+		
+		// Ask if they want to play again
+		broadcastMessage(session, "\nWould you like to play again? (yes/no)")
+	} else {
+		response := "Try again!"
+		
+		// Switch turns to next player
+		session.mutex.Lock()
+		playerCount := len(session.players)
+		session.currentPlayer = (session.currentPlayer + 1) % playerCount
+		nextPlayer := session.players[session.currentPlayer]
+		session.mutex.Unlock()
 		
 		// Send response to current player
 		writeToClient(player.conn, response)
@@ -148,54 +304,146 @@ func handlePlayerGuess(session *GameSession, player *Player) {
 		
 		// Update players about whose turn it is
 		writeToClient(nextPlayer.conn, "\nIt's your turn. Enter your guess:")
-		writeToClient(otherPlayer.conn, fmt.Sprintf("\nWaiting for %s to make a guess...", nextPlayer.name))
+		
+		// Tell other players to wait
+		for _, p := range session.players {
+			if p.id != nextPlayer.id {
+				writeToClient(p.conn, fmt.Sprintf("\nWaiting for %s to make a guess...", nextPlayer.name))
+			}
+		}
 	}
 }
 
 func handlePlayerDisconnect(session *GameSession, player *Player) {
 	log.Printf("%s has disconnected.", player.name)
 	
-	// Notify the other player
-	otherPlayerIdx := 0
-	if player.id == 1 {
-		otherPlayerIdx = 1
+	// Remove the player from the session
+	session.mutex.Lock()
+	for i, p := range session.players {
+		if p.id == player.id {
+			// Remove this player
+			session.players = append(session.players[:i], session.players[i+1:]...)
+			break
+		}
 	}
 	
-	if len(session.players) > otherPlayerIdx {
-		otherPlayer := session.players[otherPlayerIdx]
-		writeToClient(otherPlayer.conn, fmt.Sprintf("\n%s has disconnected. Game over.", player.name))
-		writeToClient(otherPlayer.conn, "GAME_OVER")
+	// Check if we still have enough players to continue
+	if len(session.players) < 2 {
+		session.gameOver = true
+		session.mutex.Unlock()
+		
+		// Notify remaining players
+		for _, p := range session.players {
+			writeToClient(p.conn, fmt.Sprintf("\n%s has disconnected. Not enough players to continue.", player.name))
+			writeToClient(p.conn, "\nGame over. Thank you for playing!")
+			p.conn.Close()
+		}
+	} else {
+		// Adjust current player index if needed
+		if session.currentPlayer >= len(session.players) {
+			session.currentPlayer = 0
+		}
+		
+		nextPlayer := session.players[session.currentPlayer]
+		session.mutex.Unlock()
+		
+		// Notify remaining players
+		broadcastMessage(session, fmt.Sprintf("\n%s has disconnected. Continuing with %d players.", 
+			player.name, len(session.players)))
+		
+		// Update turn if it was the disconnected player's turn
+		writeToClient(nextPlayer.conn, "\nIt's your turn. Enter your guess:")
+		
+		for _, p := range session.players {
+			if p.id != nextPlayer.id {
+				writeToClient(p.conn, fmt.Sprintf("\nWaiting for %s to make a guess...", nextPlayer.name))
+			}
+		}
 	}
-	
-	// End the game
-	session.gameOver = true
 }
 
 func handleGameRestart(session *GameSession) {
-	responses := make([]string, 2)
-	playersReady := 0
+	log.Println("Game over, waiting for players to decide if they want to restart...")
 	
-	// Wait for both players to respond
-	for i, player := range session.players {
-		buffer := make([]byte, 1024)
-		n, err := player.conn.Read(buffer)
-		if err != nil {
-			handlePlayerDisconnect(session, player)
-			return
-		}
-		
-		responses[i] = string(buffer[:n])
-		
-		if responses[i] == "yes" {
-			playersReady++
-			player.readyNext = true
+	// Reset player ready flags
+	for _, player := range session.players {
+		player.readyNext = false
+	}
+	
+	// Track player responses
+	responses := make(map[int]bool)
+	var responseMutex sync.Mutex
+	var wg sync.WaitGroup
+	
+	// Process each player's restart decision in separate goroutines
+	session.mutex.Lock()
+	playerCount := len(session.players)
+	playersArray := make([]*Player, playerCount)
+	copy(playersArray, session.players)
+	session.mutex.Unlock()
+	
+	wg.Add(playerCount)
+	
+	for i := range playersArray {
+		go func(playerIndex int) {
+			defer wg.Done()
+			player := playersArray[playerIndex]
+			
+			// Read the player's response
+			buffer := make([]byte, 1024)
+			n, err := player.conn.Read(buffer)
+			if err != nil {
+				log.Printf("Error reading restart response from %s: %v", player.name, err)
+				responseMutex.Lock()
+				responses[player.id] = false
+				responseMutex.Unlock()
+				return
+			}
+			
+			response := strings.TrimSpace(string(buffer[:n]))
+			log.Printf("%s responded with: %s", player.name, response)
+			
+			responseMutex.Lock()
+			if response == "yes" {
+				responses[player.id] = true
+				player.readyNext = true
+				writeToClient(player.conn, "\nYou chose to continue. Waiting for other players' responses...")
+			} else {
+				responses[player.id] = false
+				writeToClient(player.conn, "\nYou chose not to continue. Waiting for other players...")
+			}
+			responseMutex.Unlock()
+		}(i)
+	}
+	
+	// Wait for all players to respond
+	wg.Wait()
+	
+	// Count yes responses
+	session.mutex.Lock()
+	yesCount := 0
+	for _, player := range session.players {
+		if player.readyNext {
+			yesCount++
 		}
 	}
 	
-	// Check if both players want to play again
-	if playersReady == 2 {
-		// Reset the game
-		session.mutex.Lock()
+	// Check if we have enough players to restart (at least 2)
+	if yesCount >= 2 {
+		// Create a new array with only players who want to continue
+		continuingPlayers := make([]*Player, 0, yesCount)
+		for _, player := range session.players {
+			if player.readyNext {
+				continuingPlayers = append(continuingPlayers, player)
+			} else {
+				// Close connection for players who don't want to continue
+				writeToClient(player.conn, "\nThank you for playing! Goodbye.")
+				player.conn.Close()
+			}
+		}
+		
+		// Update the session with only continuing players
+		session.players = continuingPlayers
 		session.gameOver = false
 		session.guessCount = 0
 		session.secretCode = GenerateSecretCode()
@@ -203,23 +451,29 @@ func handleGameRestart(session *GameSession) {
 		session.mutex.Unlock()
 		
 		// Start a new game
-		broadcastMessage(session, "\nStarting a new game!")
-		startGame(session)
-	} else {
-		// End the game
-		broadcastMessage(session, "\nGame ended. Thank you for playing!")
+		broadcastMessage(session, fmt.Sprintf("\n%d players want to continue. Starting a new game!", yesCount))
 		
-		// Close connections
+		// Run the game session again
+		runGameSession(session)
+	} else {
+		// Not enough players to restart
+		session.mutex.Unlock()
+		broadcastMessage(session, "\nNot enough players want to continue. Game ended.")
+		
+		// Close all connections
 		for _, player := range session.players {
+			writeToClient(player.conn, "Thank you for playing! Goodbye.")
 			player.conn.Close()
 		}
 	}
 }
 
 func broadcastMessage(session *GameSession, message string) {
+	session.mutex.Lock()
 	for _, player := range session.players {
 		writeToClient(player.conn, message)
 	}
+	session.mutex.Unlock()
 }
 
 func writeToClient(conn net.Conn, s string) {
