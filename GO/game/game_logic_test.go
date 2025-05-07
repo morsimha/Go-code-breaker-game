@@ -1,8 +1,12 @@
 package game
 
 import (
+	"regexp"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -103,4 +107,57 @@ func generateFromFixedNumber(num int) int {
 	}
 	finalNum, _ := strconv.Atoi(finalStr)
 	return finalNum
+}
+
+// TestGenerateTimestampPrefix ensures timestamp prefix is properly formatted
+func TestGenerateTimestampPrefix(t *testing.T) {
+	// Get the prefix
+	prefix := GenerateTimestampPrefix()
+	
+	// Check that the prefix contains the expected format and ends with a space
+	assert.Contains(t, prefix, "TIME: ")
+	assert.True(t, strings.HasSuffix(prefix, " "), "Prefix should end with a space")
+	
+	// Extract the timestamp part (between "TIME: " and the final space)
+	timestampStr := strings.TrimPrefix(prefix, "TIME: ")
+	timestampStr = strings.TrimSuffix(timestampStr, " ")
+	
+	// Parse the timestamp to ensure it's a valid Unix timestamp
+	timestamp, err := strconv.ParseInt(timestampStr, 10, 64)
+	assert.NoError(t, err, "Should be able to parse the timestamp")
+	
+	// Check that the timestamp is recent (within the last minute)
+	now := time.Now().Unix()
+	assert.InDelta(t, now, timestamp, 60, "Timestamp should be recent")
+	
+	// Test actual usage pattern from server code
+	var response string
+	secretCode := 1234
+	numGuess := 1234
+	
+	// Simulate the server code behavior
+	if secretCode == numGuess {
+		prefix = GenerateTimestampPrefix()
+		response = prefix + "Congratulations! You guessed the correct number!"
+	} else {
+		response = "Try again!"
+	}
+	
+	// Verify the response contains the timestamp for correct guesses
+	assert.Contains(t, response, "TIME: ")
+	assert.Contains(t, response, "Congratulations!")
+	
+	// Ensure there's proper spacing between the timestamp and message
+	assert.Contains(t, response, " Congratulations!")
+	
+	// Split by "Congratulations" and check the prefix format
+	parts := strings.Split(response, "Congratulations!")
+	assert.Equal(t, 2, len(parts))
+	assert.True(t, strings.HasSuffix(parts[0], " "), "There should be a space before the message")
+	
+	// Check exact format matches the expected output
+	expectedPattern := `TIME: \d+ Congratulations!`
+	matched, err := regexp.MatchString(expectedPattern, response)
+	assert.NoError(t, err)
+	assert.True(t, matched, "Response format should match the expected pattern")
 }

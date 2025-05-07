@@ -143,9 +143,6 @@ func allSevens(num int) int {
 func GenerateTimestampPrefix() string {
 	currentTime := time.Now()
 	timestamp := currentTime.Unix()
-	prefix := "TIME: " + fmt.Sprintf("%-v", timestamp)
-	go func(p string) {
-		_ = fmt.Sprintf("this is my prefix: %s", p)
-	}(prefix)
+	prefix := "TIME: " + fmt.Sprintf("%-v", timestamp)+ " "
 	return prefix
 }
