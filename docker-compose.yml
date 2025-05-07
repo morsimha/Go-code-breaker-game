@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: game-server
+    ports:
+      - "8080:8080"
+    command: ["./mygame", "server"]
+
+  client:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    container_name: game-client
+    depends_on:
+      - server
+    stdin_open: true
+    tty: true
+    command: ["./myclient", "client"]

@@ -1,18 +1,18 @@
-# Game Deployment Guide (Dockerized)
+# Game Deployment Guide (Docker + Docker Compose)
 
-This document provides step-by-step instructions to build, run, and play the game using Docker.
+This document provides complete instructions to build, run, and deploy the game using Docker and Docker Compose.
 
 ---
 
 ## 1. Pre-requisites
 
-Before deploying the game, ensure the following are installed:
+Make sure the following software is installed:
 
 - Docker: https://www.docker.com/get-started
 - Git: https://git-scm.com/downloads
-- (Optional) Docker Compose: https://docs.docker.com/compose/ — not required for this version
+- (Optional) Docker Compose: https://docs.docker.com/compose/
 
-Verify installation:
+Check versions:
 
 ```bash
 docker --version
@@ -23,8 +23,6 @@ git --version
 
 ## 2. Clone the Repository
 
-Open your terminal and run:
-
 ```bash
 git clone https://github.com/yourusername/your-repo-name.git
 cd your-repo-name
@@ -32,41 +30,67 @@ cd your-repo-name
 
 ---
 
-## 3. Build the Docker Image
+## 3. Dockerfile Setup
 
-Run the following command in the root project directory (where the Dockerfile is located):
+Ensure the following files exist:
+
+- `Dockerfile` for the game server (produces binary `mygame`)
+- `Dockerfile.client` for the client (produces binary `myclient`)
+
+---
+
+## 4. Run with Docker Compose
+
+To run the full game environment (server and client):
 
 ```bash
-docker build -t go-code-breaker .
+docker-compose up --build
+```
+
+This will:
+- Build both the server and client images
+- Run the server on port 8080
+- Start a client container that connects to the server
+
+---
+
+## 5. Interact with the Game
+
+The game is command-line based. To view client output:
+
+```bash
+docker logs game-client
+```
+
+To attach directly to the client terminal:
+
+```bash
+docker attach game-client
+```
+
+To stop all containers:
+
+```bash
+docker-compose down
 ```
 
 ---
 
-## 4. Run the Docker Container
+## 6. Optional: Manual Docker Commands
 
-Start the game server:
+To build and run the server manually:
 
 ```bash
+docker build -t go-code-breaker -f Dockerfile .
 docker run -p 8080:8080 go-code-breaker
 ```
 
-This maps port 8080 of the container to your local machine.
-
----
-
-## 5. Connect and Play the Game
-
-The game is command-line based. To connect as a client:
-
-1. Open a new terminal window
-2. Ensure Go is installed on your system
-3. Run the client:
+To build and run the client manually:
 
 ```bash
-go run GO/main.go client
+docker build -t go-game-client -f Dockerfile.client .
+docker run --network=host go-game-client
 ```
-
-This connects to the server at localhost:8080.
 
 ---
 

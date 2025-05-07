@@ -1,0 +1,12 @@
+FROM golang:1.21-alpine
+
+WORKDIR /app
+
+COPY GO/go.mod GO/go.sum ./
+RUN go mod download
+
+COPY GO/. .
+
+RUN go build -o myclient main.go
+
+CMD ["./myclient", "client"]
