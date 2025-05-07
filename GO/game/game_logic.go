@@ -60,8 +60,6 @@ func GenerateSecretCode() int {
 		// If it's a palindrome, replace all digits with 7
 		num = allSevens(num)
 	}
-	// Print the chosen number for debugging purposes
-	fmt.Printf("Generated number: %d\n", num)
 
 	return num
 }
