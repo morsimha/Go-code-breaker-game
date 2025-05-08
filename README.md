@@ -1,7 +1,5 @@
 # Code Breaker Multiplayer Game (Go)
 
-## Author: Mor Simha
-
 ---
 
 ##  About the Project
@@ -159,7 +157,7 @@ git push origin YOURNAME_SURNAME
 
 ```bash
 go run main.go server   # Start server
-go run main.go client   # Connect as client
+go run main.go client localhost:8080 # Start the client (local mode requires providing the address explicitly):
 ```
 
 ---
@@ -167,6 +165,5 @@ go run main.go client   # Connect as client
 ## Author Info
 
 Full Name: Mor simha 
-Branch: MOR_SIMHA_BRANCH
 
 ---
