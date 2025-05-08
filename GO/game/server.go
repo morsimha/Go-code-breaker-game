@@ -59,7 +59,7 @@ func StartServer() {
 			maxPlayers:      maxPlayers,
 			acceptingPlayers: true,
 		}
-		
+
 		log.Printf("New game session created. Waiting for up to %d players to connect...", maxPlayers)
 		
 		// Start accepting players in a separate goroutine
@@ -82,9 +82,6 @@ func acceptPlayers(listener net.Listener, session *GameSession, playersConnected
 	// Channel to receive new connections
 	connChan := make(chan net.Conn)
 	
-	// Minimum players to start a game
-	minPlayers := 2
-	
 	// Start accepting connections in a separate goroutine
 	go func() {
 		for session.acceptingPlayers {
@@ -96,99 +93,52 @@ func acceptPlayers(listener net.Listener, session *GameSession, playersConnected
 			connChan <- conn
 		}
 	}()
-	
-	// Start a ticker to check if we should start the game
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-	
-	// Handle connections until we reach max players or the timer expires
+
+	// Handle connections until we reach players number
 	for session.acceptingPlayers {
-		select {
-		case conn := <-connChan:
-			// New player connected
-			session.mutex.Lock()
-			if len(session.players) < session.maxPlayers && !session.gameStarted {
-				playerID := len(session.players) + 1
-				player := &Player{
-					conn: conn,
-					id:   playerID,
-					name: fmt.Sprintf("Player %d", playerID),
-					readyNext: false,
-				}
-				
-				session.players = append(session.players, player)
-				log.Printf("%s has connected. Total players: %d/%d", player.name, len(session.players), session.maxPlayers)
-				
-				// Send welcome message to the new player
-				writeToClient(conn, fmt.Sprintf("Welcome %s! Waiting for other players... (%d/%d connected)", 
-					player.name, len(session.players), session.maxPlayers))
-				
-				// Broadcast to other players that someone new joined
-				for _, p := range session.players {
-					if p.id != playerID {
-						writeToClient(p.conn, fmt.Sprintf("\n%s has joined the game. (%d/%d players connected)", 
-							player.name, len(session.players), session.maxPlayers))
-					}
-				}
-				
-				// Check if we have reached max players
-				if len(session.players) == session.maxPlayers {
-					session.acceptingPlayers = false
-					session.mutex.Unlock()
-					close(playersConnected)
-					return
-				}
-				
-				// Check if we have minimum players and should start a countdown
-				if len(session.players) >= minPlayers && !session.gameStarted {
-					// Broadcast that we have minimum players
-					broadcastMessage(session, fmt.Sprintf("\nMinimum players reached (%d/%d). Game will start in 30 seconds or when %d players connect.", 
-						len(session.players), session.maxPlayers, session.maxPlayers))
-					
-					// Start a countdown timer
-					go func() {
-						time.Sleep(30 * time.Second)
-						session.mutex.Lock()
-						if !session.gameStarted && len(session.players) >= minPlayers {
-							session.acceptingPlayers = false
-							session.mutex.Unlock()
-							close(playersConnected)
-						} else {
-							session.mutex.Unlock()
-						}
-					}()
-				}
-			} else {
-				// Game already started or max players reached, reject connection
-				writeToClient(conn, "Sorry, this game has already started or is full. Please try again later.")
-				conn.Close()
+
+		conn := <-connChan
+		// New player connected
+		session.mutex.Lock()
+		if len(session.players) < session.maxPlayers && !session.gameStarted {
+			playerID := len(session.players) + 1
+			player := &Player{
+				conn:      conn,
+				id:        playerID,
+				name:      fmt.Sprintf("Player %d", playerID),
+				readyNext: false,
 			}
-			session.mutex.Unlock()
-			
-		case <-ticker.C:
-			// Check if we have minimum players to start
-			session.mutex.Lock()
-			if len(session.players) >= minPlayers && !session.gameStarted {
-				remaining := session.maxPlayers - len(session.players)
-				broadcastMessage(session, fmt.Sprintf("\nWaiting for up to %d more players. Game will start soon.", remaining))
+
+			session.players = append(session.players, player)
+			log.Printf("%s has connected. Total players: %d/%d", player.name, len(session.players), session.maxPlayers)
+
+			// Send welcome message to the new player
+			writeToClient(conn, fmt.Sprintf("Welcome %s! Waiting for other players... (%d/%d connected)",
+				player.name, len(session.players), session.maxPlayers))
+
+			// Broadcast to other players that someone new joined
+			for _, p := range session.players {
+				if p.id != playerID {
+					writeToClient(p.conn, fmt.Sprintf("\n%s has joined the game. (%d/%d players connected)",
+						player.name, len(session.players), session.maxPlayers))
+				}
 			}
-			session.mutex.Unlock()
-			
-		case <-timer.C:
-			// Max wait time exceeded
-			session.mutex.Lock()
-			if len(session.players) >= minPlayers {
-				// We have enough players, start the game
+
+			// Check if we have reached max players
+			if len(session.players) == session.maxPlayers {
+				log.Printf("lets go")
 				session.acceptingPlayers = false
 				session.mutex.Unlock()
 				close(playersConnected)
 				return
-			} else {
-				// Not enough players, reset the timer
-				session.mutex.Unlock()
-				timer.Reset(3 * time.Minute)
 			}
+
+		} else {
+			// Game already started or max players reached, reject connection
+			writeToClient(conn, "Sorry, this game has already started or is full. Please try again later.")
+			conn.Close()
 		}
+		session.mutex.Unlock()
 	}
 }
 

@@ -25,7 +25,7 @@ The game supports:
 - Turn-based logic with 2 players per game
 - Real-time feedback to both players
 - Game restarts without reconnecting
-- Optional: configurable number of players mechanisem (`--players=N`) (right now only relevant for 2 players game)
+- Optional: configurable number of players mechanisem
 
 ---
 
@@ -156,11 +156,17 @@ git push origin YOURNAME_SURNAME
 ## Example Commands
 
 ```bash
-go run main.go server   # Start server
-go run main.go client localhost:8080 # Start the client (local mode requires providing the address explicitly):
+# Start the server (default 2 players)
+go run main.go server
+
+# Alternatively, Start the server with a configurable number of players (e.g., 3 players)
+go run main.go server 3
+
+# Start the client (local mode requires providing the address explicitly))
+go run main.go client localhost:8080
 ```
 
----
+Players must choose one mode: either start the server or connect as a client.
 
 ## Author Info
 
