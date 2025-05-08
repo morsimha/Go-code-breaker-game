@@ -26,23 +26,24 @@ type GameSession struct {
 	guessCount       int
 	mutex            sync.Mutex
 	gameStarted      bool
-	totalPlayers     int
+	maxPlayers       int
 	acceptingPlayers bool
 	singlePlayerMode bool
+	turnTimeLimit    time.Duration // Time limit for each player's turn
 }
 
 // StartMultiplayerServer starts the server in multiplayer mode
 func StartMultiplayerServer() {
 	// Get the maximum number of players from environment variable or argument
 	// Default to 2 if not specified
-	totalPlayers := 2
+	maxPlayers := 2
 	if len(os.Args) > 2 {
 		if val, err := strconv.Atoi(os.Args[2]); err == nil && val > 1 {
-			totalPlayers = val
+			maxPlayers = val
 		}
 	}
 
-	startServer(totalPlayers, false)
+	startServer(maxPlayers, false)
 }
 
 // StartSinglePlayerServer starts the server in single-player mode
@@ -51,13 +52,13 @@ func StartSinglePlayerServer() {
 }
 
 // Common server starting function with mode parameter
-func startServer(totalPlayers int, singlePlayerMode bool) {
+func startServer(maxPlayers int, singlePlayerMode bool) {
 	modeStr := "multiplayer"
 	if singlePlayerMode {
 		modeStr = "single-player"
 	}
 
-	log.Printf("Starting server in %s mode for %d players...", modeStr, totalPlayers)
+	log.Printf("Starting server in %s mode with support for %d players...", modeStr, maxPlayers)
 	listener, err := net.Listen("tcp", "0.0.0.0:8080")
 	if err != nil {
 		log.Fatalf("Error starting server: %v", err)
@@ -67,21 +68,22 @@ func startServer(totalPlayers int, singlePlayerMode bool) {
 	for {
 		// Create a new game session
 		session := &GameSession{
-			players:          make([]*Player, 0, totalPlayers),
+			players:          make([]*Player, 0, maxPlayers),
 			currentPlayer:    0,
 			secretCode:       GenerateSecretCode(),
 			gameOver:         false,
 			guessCount:       0,
 			gameStarted:      false,
-			totalPlayers:     totalPlayers,
+			maxPlayers:       maxPlayers,
 			acceptingPlayers: true,
 			singlePlayerMode: singlePlayerMode,
+			turnTimeLimit:    5 * time.Second, // 30-second time limit for each turn
 		}
 
 		if singlePlayerMode {
 			log.Printf("New game session created. Waiting for a player to connect...")
 		} else {
-			log.Printf("New game session created. Waiting for %d players to connect...", totalPlayers)
+			log.Printf("New game session created. Waiting for up to %d players to connect...", maxPlayers)
 		}
 
 		// Start accepting players in a separate goroutine
@@ -121,7 +123,7 @@ func acceptPlayers(listener net.Listener, session *GameSession, playersConnected
 		conn := <-connChan
 		// New player connected
 		session.mutex.Lock()
-		if len(session.players) < session.totalPlayers && !session.gameStarted {
+		if len(session.players) < session.maxPlayers && !session.gameStarted {
 			playerID := len(session.players) + 1
 			player := &Player{
 				conn:      conn,
@@ -131,27 +133,29 @@ func acceptPlayers(listener net.Listener, session *GameSession, playersConnected
 			}
 
 			session.players = append(session.players, player)
-			log.Printf("%s has connected. Total players: %d/%d", player.name, len(session.players), session.totalPlayers)
+			log.Printf("%s has connected. Total players: %d/%d", player.name, len(session.players), session.maxPlayers)
 
 			// Send welcome message to the new player
 			if session.singlePlayerMode {
 				writeToClient(conn, fmt.Sprintf("Welcome %s! You are playing in single-player mode against the computer.",
 					player.name))
+				writeToClient(conn, fmt.Sprintf("You have %d seconds to make each guess!", int(session.turnTimeLimit.Seconds())))
 			} else {
 				writeToClient(conn, fmt.Sprintf("Welcome %s! Waiting for other players... (%d/%d connected)",
-					player.name, len(session.players), session.totalPlayers))
+					player.name, len(session.players), session.maxPlayers))
+				writeToClient(conn, fmt.Sprintf("You will have %d seconds to make each guess!", int(session.turnTimeLimit.Seconds())))
 
 				// Broadcast to other players that someone new joined
 				for _, p := range session.players {
 					if p.id != playerID {
 						writeToClient(p.conn, fmt.Sprintf("\n%s has joined the game. (%d/%d players connected)",
-							player.name, len(session.players), session.totalPlayers))
+							player.name, len(session.players), session.maxPlayers))
 					}
 				}
 			}
 
 			// Check if we have reached max players
-			if len(session.players) == session.totalPlayers {
+			if len(session.players) == session.maxPlayers {
 				session.acceptingPlayers = false
 				session.mutex.Unlock()
 				close(playersConnected)
@@ -195,6 +199,7 @@ func runGameSession(session *GameSession) {
 		player := session.players[0]
 		writeToClient(player.conn, "\nGame is starting in single-player mode!")
 		writeToClient(player.conn, "Try to guess the 4-digit code.")
+		writeToClient(player.conn, fmt.Sprintf("\nYou have %d seconds for each guess!", int(session.turnTimeLimit.Seconds())))
 		writeToClient(player.conn, "\nIt's your turn. Enter your guess:")
 
 		// Run the single-player game loop
@@ -209,6 +214,7 @@ func runGameSession(session *GameSession) {
 		// Notify players that the game is starting
 		broadcastMessage(session, "\nGame is starting with "+strconv.Itoa(len(session.players))+" players!")
 		broadcastMessage(session, "Try to guess the 4-digit code. Players will take turns in order.")
+		broadcastMessage(session, fmt.Sprintf("\nEach player has %d seconds to make their guess!", int(session.turnTimeLimit.Seconds())))
 
 		// Show player list
 		playerList := "\nPlayers in this game:"
@@ -243,90 +249,181 @@ func runGameSession(session *GameSession) {
 }
 
 func handlePlayerGuess(session *GameSession, player *Player) {
-	// Read the player's guess
-	buffer := make([]byte, 1024)
-	n, err := player.conn.Read(buffer)
-	if err != nil {
-		log.Printf("Error reading from %s: %v", player.name, err)
-		handlePlayerDisconnect(session, player)
-		return
-	}
+	// Create channels for the guess and timeout
+	guessChan := make(chan string)
+	errChan := make(chan error)
+	timeoutChan := time.After(session.turnTimeLimit)
 
-	// Process the guess
-	guess := string(buffer[:n])
-	log.Printf("Received guess from %s: %s", player.name, guess)
+	// Start a goroutine to read the player's guess
+	go func() {
+		buffer := make([]byte, 1024)
+		player.conn.SetReadDeadline(time.Now().Add(session.turnTimeLimit))
+		n, err := player.conn.Read(buffer)
+		if err != nil {
+			errChan <- err
+			return
+		}
+		guessChan <- string(buffer[:n])
+	}()
 
-	// Validate the guess
-	numGuess, err := ValidateGuess(guess)
-	if err != nil {
-		writeToClient(player.conn, err.Error())
-		writeToClient(player.conn, "\nTry again:")
-		return
-	}
+	// Wait for either a guess or a timeout
+	select {
+	case guess := <-guessChan:
+		// Reset read deadline
+		player.conn.SetReadDeadline(time.Time{})
 
-	// Increment guess count
-	session.mutex.Lock()
-	session.guessCount++
-	totalGuesses := session.guessCount
-	session.mutex.Unlock()
+		// Process the guess
+		log.Printf("Received guess from %s: %s", player.name, guess)
 
-	// Check if the guess is correct
-	if numGuess == session.secretCode {
-		// Game over - player wins
-		prefix := GenerateTimestampPrefix()
-		response := prefix + "Congratulations! You guessed the correct number!"
-		writeToClient(player.conn, response)
+		// Validate the guess
+		numGuess, err := ValidateGuess(guess)
+		if err != nil {
+			writeToClient(player.conn, err.Error())
+			writeToClient(player.conn, "\nTry again:")
+			return
+		}
 
+		// Increment guess count
 		session.mutex.Lock()
-		session.gameOver = true
+		session.guessCount++
+		totalGuesses := session.guessCount
 		session.mutex.Unlock()
 
-		if session.singlePlayerMode {
-			// Single-player mode - notify only current player
-			writeToClient(player.conn, fmt.Sprintf("\nYou guessed the correct code (%d)!", numGuess))
-			writeToClient(player.conn, fmt.Sprintf("\nSecret code was: %d", session.secretCode))
-			writeToClient(player.conn, fmt.Sprintf("\nTotal guesses: %d", totalGuesses))
-
-			// Ask if they want to play again
-			writeToClient(player.conn, "\nWould you like to play again? (yes/no)")
-		} else {
-			// Multiplayer mode - notify all players
-			broadcastMessage(session, fmt.Sprintf("\n%s guessed the correct code (%d) and won the game!", player.name, numGuess))
-			broadcastMessage(session, fmt.Sprintf("\nSecret code was: %d", session.secretCode))
-			broadcastMessage(session, fmt.Sprintf("\nTotal guesses: %d", totalGuesses))
-
-			// Ask if they want to play again
-			broadcastMessage(session, "\nWould you like to play again? (yes/no)")
-		}
-	} else {
-		response := "Try again!"
-
-		if session.singlePlayerMode {
-			// Single-player mode - just notify the player
+		// Check if the guess is correct
+		if numGuess == session.secretCode {
+			// Game over - player wins
+			prefix := GenerateTimestampPrefix()
+			response := prefix + "Congratulations! You guessed the correct number!"
 			writeToClient(player.conn, response)
-			writeToClient(player.conn, fmt.Sprintf("\nYou guessed %d (incorrect). Total guesses: %d", numGuess, totalGuesses))
-			writeToClient(player.conn, "\nIt's your turn. Enter your guess:")
+
+			session.mutex.Lock()
+			session.gameOver = true
+			session.mutex.Unlock()
+
+			if session.singlePlayerMode {
+				// Single-player mode - notify only current player
+				writeToClient(player.conn, fmt.Sprintf("\nYou guessed the correct code (%d)!", numGuess))
+				writeToClient(player.conn, fmt.Sprintf("\nSecret code was: %d", session.secretCode))
+				writeToClient(player.conn, fmt.Sprintf("\nTotal guesses: %d", totalGuesses))
+
+				// Ask if they want to play again
+				writeToClient(player.conn, "\nWould you like to play again? (yes/no)")
+			} else {
+				// Multiplayer mode - notify all players
+				broadcastMessage(session, fmt.Sprintf("\n%s guessed the correct code (%d) and won the game!", player.name, numGuess))
+				broadcastMessage(session, fmt.Sprintf("\nSecret code was: %d", session.secretCode))
+				broadcastMessage(session, fmt.Sprintf("\nTotal guesses: %d", totalGuesses))
+
+				// Ask if they want to play again
+				broadcastMessage(session, "\nWould you like to play again? (yes/no)")
+			}
 		} else {
-			// Multiplayer mode - switch turns to next player
+			response := "Try again!"
+
+			if session.singlePlayerMode {
+				// Single-player mode - just notify the player
+				writeToClient(player.conn, response)
+				writeToClient(player.conn, fmt.Sprintf("\nYou guessed %d (incorrect). Total guesses: %d", numGuess, totalGuesses))
+				writeToClient(player.conn, "\nIt's your turn. Enter your guess:")
+			} else {
+				// Multiplayer mode - switch turns to next player
+				session.mutex.Lock()
+				playerCount := len(session.players)
+				session.currentPlayer = (session.currentPlayer + 1) % playerCount
+				nextPlayer := session.players[session.currentPlayer]
+				session.mutex.Unlock()
+
+				// Send response to current player
+				writeToClient(player.conn, response)
+				broadcastMessage(session, fmt.Sprintf("\n%s guessed %d (incorrect). Total guesses: %d", player.name, numGuess, totalGuesses))
+
+				// Update players about whose turn it is
+				writeToClient(nextPlayer.conn, "\nIt's your turn. Enter your guess:")
+
+				// Tell other players to wait
+				for _, p := range session.players {
+					if p.id != nextPlayer.id {
+						writeToClient(p.conn, fmt.Sprintf("\nWaiting for %s to make a guess...", nextPlayer.name))
+					}
+				}
+			}
+		}
+
+	case err := <-errChan:
+		// Handle error (could be a disconnection or timeout)
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			// This is a timeout error
+			log.Printf("%s timed out on their turn", player.name)
+
+			if session.singlePlayerMode {
+				// In single-player, just tell them they timed out and give another chance
+				writeToClient(player.conn, fmt.Sprintf("\nTime's up! You took longer than %d seconds. Try again:", int(session.turnTimeLimit.Seconds())))
+				// Reset read deadline
+				player.conn.SetReadDeadline(time.Time{})
+			} else {
+				// In multiplayer, forfeit their turn
+				writeToClient(player.conn, fmt.Sprintf("\nTime's up! You took longer than %d seconds. Your turn is forfeited.", int(session.turnTimeLimit.Seconds())))
+
+				// Move to next player
+				session.mutex.Lock()
+				playerCount := len(session.players)
+				session.currentPlayer = (session.currentPlayer + 1) % playerCount
+				nextPlayer := session.players[session.currentPlayer]
+				session.mutex.Unlock()
+
+				// Broadcast timeout message
+				broadcastMessage(session, fmt.Sprintf("\n%s ran out of time and forfeited their turn!", player.name))
+
+				// Update players about whose turn it is
+				writeToClient(nextPlayer.conn, "\nIt's your turn. Enter your guess:")
+
+				// Tell other players to wait
+				for _, p := range session.players {
+					if p.id != nextPlayer.id {
+						writeToClient(p.conn, fmt.Sprintf("\nWaiting for %s to make a guess...", nextPlayer.name))
+					}
+				}
+
+				// Reset read deadline for the player who timed out
+				player.conn.SetReadDeadline(time.Time{})
+			}
+		} else {
+			// Some other error (like disconnection)
+			log.Printf("Error reading from %s: %v", player.name, err)
+			handlePlayerDisconnect(session, player)
+		}
+
+	case <-timeoutChan:
+		// This is a backup timeout in case the SetReadDeadline doesn't work
+		// It should rarely be triggered because the read deadline should timeout first
+		log.Printf("%s timed out on their turn (backup timeout)", player.name)
+
+		// Similar handling as above
+		if session.singlePlayerMode {
+			writeToClient(player.conn, fmt.Sprintf("\nTime's up! You took longer than %d seconds. Try again:", int(session.turnTimeLimit.Seconds())))
+			// Force reset of the connection's read state
+			player.conn.SetReadDeadline(time.Time{})
+		} else {
+			writeToClient(player.conn, fmt.Sprintf("\nTime's up! You took longer than %d seconds. Your turn is forfeited.", int(session.turnTimeLimit.Seconds())))
+
+			// Move to next player
 			session.mutex.Lock()
 			playerCount := len(session.players)
 			session.currentPlayer = (session.currentPlayer + 1) % playerCount
 			nextPlayer := session.players[session.currentPlayer]
 			session.mutex.Unlock()
 
-			// Send response to current player
-			writeToClient(player.conn, response)
-			broadcastMessage(session, fmt.Sprintf("\n%s guessed %d (incorrect). Total guesses: %d", player.name, numGuess, totalGuesses))
-
-			// Update players about whose turn it is
+			broadcastMessage(session, fmt.Sprintf("\n%s ran out of time and forfeited their turn!", player.name))
 			writeToClient(nextPlayer.conn, "\nIt's your turn. Enter your guess:")
 
-			// Tell other players to wait
 			for _, p := range session.players {
 				if p.id != nextPlayer.id {
 					writeToClient(p.conn, fmt.Sprintf("\nWaiting for %s to make a guess...", nextPlayer.name))
 				}
 			}
+
+			// Force reset of the connection's read state
+			player.conn.SetReadDeadline(time.Time{})
 		}
 	}
 }
@@ -334,11 +431,15 @@ func handlePlayerGuess(session *GameSession, player *Player) {
 func handleSinglePlayerRestart(session *GameSession, player *Player) {
 	log.Println("Single-player game over, waiting for player to decide if they want to restart...")
 
-	// Read the player's response
+	// Read the player's response with a timeout
+	player.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	buffer := make([]byte, 1024)
 	n, err := player.conn.Read(buffer)
+	player.conn.SetReadDeadline(time.Time{}) // Reset deadline
+
 	if err != nil {
 		log.Printf("Error reading restart response from %s: %v", player.name, err)
+		writeToClient(player.conn, "\nNo response received. Ending game. Thank you for playing!")
 		player.conn.Close()
 		return
 	}
@@ -357,6 +458,7 @@ func handleSinglePlayerRestart(session *GameSession, player *Player) {
 		// Start a new game
 		writeToClient(player.conn, "\nStarting a new game!")
 		writeToClient(player.conn, "\nTry to guess the 4-digit code.")
+		writeToClient(player.conn, fmt.Sprintf("\nYou have %d seconds for each guess!", int(session.turnTimeLimit.Seconds())))
 		writeToClient(player.conn, "\nIt's your turn. Enter your guess:")
 
 		// Run the single-player game session again
@@ -451,19 +553,26 @@ func handleGameRestart(session *GameSession) {
 
 	wg.Add(playerCount)
 
+	// Set restart decision timeout
+	decisionTimeout := 30 * time.Second
+
 	for i := range playersArray {
 		go func(playerIndex int) {
 			defer wg.Done()
 			player := playersArray[playerIndex]
 
-			// Read the player's response
+			// Read the player's response with a timeout
+			player.conn.SetReadDeadline(time.Now().Add(decisionTimeout))
 			buffer := make([]byte, 1024)
 			n, err := player.conn.Read(buffer)
+			player.conn.SetReadDeadline(time.Time{}) // Reset deadline
+
 			if err != nil {
-				log.Printf("Error reading restart response from %s: %v", player.name, err)
+				log.Printf("Error or timeout reading restart response from %s: %v", player.name, err)
 				responseMutex.Lock()
 				responses[player.id] = false
 				responseMutex.Unlock()
+				writeToClient(player.conn, "\nNo response received in time. You'll be disconnected when the game restarts.")
 				return
 			}
 
@@ -483,7 +592,7 @@ func handleGameRestart(session *GameSession) {
 		}(i)
 	}
 
-	// Wait for all players to respond
+	// Wait for all players to respond (or timeout)
 	wg.Wait()
 
 	// Count yes responses
@@ -519,6 +628,7 @@ func handleGameRestart(session *GameSession) {
 
 		// Start a new game
 		broadcastMessage(session, fmt.Sprintf("\n%d players want to continue. Starting a new game!", yesCount))
+		broadcastMessage(session, fmt.Sprintf("\nEach player has %d seconds to make their guess!", int(session.turnTimeLimit.Seconds())))
 
 		// Run the game session again
 		runGameSession(session)

@@ -9,6 +9,7 @@ A multiplayer "Code Breaker" game written in Go. In this game, players must gues
 The game supports:
 - **Single-player mode** - One player plays against the computer
 - **Multiplayer mode** - 2+ players take turns guessing the code
+- **Time-based challenge** - Players must guess within a time limit or forfeit their turn
 - Docker and Kubernetes deployment
 - CLI-based interaction
 
@@ -28,10 +29,18 @@ The game supports:
 - Game restarts without reconnecting
 - Configurable number of players in multiplayer mode
 
+### Time-Based Challenge
+- Each player has 30 seconds to make their guess
+- If time runs out:
+  - In multiplayer mode: Player forfeits their turn, and play passes to the next player
+  - In single-player mode: Player is prompted to try again
+- Visual indicators (⏰) alert players about time limits and timeouts
+- Creates tension and maintains game pace
+
 ### How to Play
 1. Start the server in either single-player or multiplayer mode
 2. Connect as a client
-3. Guess a 4-digit number when it's your turn
+3. Guess a 4-digit number when it's your turn (within the time limit!)
 4. Continue guessing until someone (or you in single-player) breaks the code
 5. After the game concludes, you can choose to play again
 
@@ -193,12 +202,16 @@ go run main.go client localhost:8080
    
 2. Players take turns guessing the code (or continuously guess in single-player mode)
 
-3. When a player guesses correctly:
+3. **Time Challenge**: Each player has 30 seconds to make a guess
+   - In multiplayer: Timeout results in forfeited turn
+   - In single-player: Timeout prompts the player to try again
+
+4. When a player guesses correctly:
    - The game announces the winner
    - Shows the total number of guesses made
    - Asks if players want to play again
 
-4. Players can exit any time by typing "exit"
+5. Players can exit any time by typing "exit"
 
 ---
 
@@ -207,6 +220,7 @@ go run main.go client localhost:8080
 ### Single-Player Mode
 ```
 Welcome Player 1! You are playing in single-player mode against the computer.
+⏱️ You have 30 seconds to make each guess!
 Game is starting in single-player mode!
 Try to guess the 4-digit code.
 
@@ -214,6 +228,8 @@ It's your turn. Enter your guess:
 > 1234
 You guessed 1234 (incorrect). Total guesses: 1
 It's your turn. Enter your guess:
+> [player takes too long]
+⏰ Time's up! You took longer than 30 seconds. Try again:
 > 5678
 You guessed 5678 (incorrect). Total guesses: 2
 [...continues until correct guess...]
@@ -222,10 +238,12 @@ You guessed 5678 (incorrect). Total guesses: 2
 ### Multiplayer Mode
 ```
 Welcome Player 1! Waiting for other players... (1/2 connected)
+⏱️ You will have 30 seconds to make each guess!
 Player 2 has joined the game. (2/2 players connected)
 
 Game is starting with 2 players!
 Try to guess the 4-digit code. Players will take turns in order.
+⏱️ Each player has 30 seconds to make their guess!
 
 Players in this game:
 - Player 1
@@ -236,7 +254,12 @@ It's your turn. Enter your guess:
 Player 1 guessed 1234 (incorrect). Total guesses: 1
 
 Waiting for Player 2 to make a guess...
-[Player 2 guesses...]
+[Player 2 takes too long]
+⏰ Player 2 ran out of time and forfeited their turn!
+
+It's your turn. Enter your guess:
+> 5678
+[...continues until correct guess...]
 ```
 
 ---

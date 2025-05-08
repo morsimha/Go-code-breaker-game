@@ -49,8 +49,21 @@ func StartClient(address string) error {
 			// Check if it's this player's turn
 			if strings.Contains(message, "It's your turn") {
 				isMyTurn = true
-			} else if strings.Contains(message, "Waiting for") {
+			} else if strings.Contains(message, "Waiting for") || 
+                     strings.Contains(message, "ran out of time") ||
+                     strings.Contains(message, "turn is forfeited") {
 				isMyTurn = false
+			}
+			
+			// Add visual indicator for time-based messages
+			if strings.Contains(message, "Time's up!") || 
+               strings.Contains(message, "ran out of time") {
+				message = "\n⏰ " + message
+			}
+			
+			// Add visual indicator for time limit information
+			if strings.Contains(message, "seconds to make") {
+				message = "⏱️ " + message
 			}
 			
 			serverMessages <- message
@@ -70,6 +83,11 @@ func StartClient(address string) error {
 			   strings.Contains(message, "Try again:") ||
 			   strings.Contains(message, "play again") {
 				var userInput string
+				
+				// Check if this is a time-based prompt
+				if strings.Contains(message, "Time's up!") {
+					fmt.Println("⚠️ You ran out of time on your previous turn!")
+				}
 				
 				// For play again prompt
 				if strings.Contains(message, "play again") {
@@ -100,9 +118,10 @@ func StartClient(address string) error {
 				// After sending input, it's no longer this player's turn
 				isMyTurn = false
 			}
-		case <-time.After(60 * time.Second):
+		case <-time.After(90 * time.Second):
 			// Timeout for safety (in case of deadlock)
-			fmt.Println("No response from server in 60 seconds. Please check your connection.")
+			// This is longer than the server's turn timeout to account for network latency and processing
+			fmt.Println("No response from server in 90 seconds. Please check your connection.")
 			return fmt.Errorf("server response timeout")
 		}
 	}
