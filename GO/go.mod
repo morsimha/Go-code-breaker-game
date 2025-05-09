@@ -1,4 +1,4 @@
-module ccs_interview
+module CodeBreaker
 
 go 1.20
 
