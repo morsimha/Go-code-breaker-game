@@ -10,6 +10,7 @@ The game supports:
 - **Single-player mode** - One player plays against the computer
 - **Multiplayer mode** - 2+ players take turns guessing the code
 - **Time-based challenge** - Players must guess within a time limit or forfeit their turn
+- **Server-side analytics** - Track game statistics and identify hard-to-guess numbers
 - Docker and Kubernetes deployment
 - CLI-based interaction
 
@@ -36,6 +37,17 @@ The game supports:
   - In single-player mode: Player is prompted to try again
 - Visual indicators (⏰) alert players about time limits and timeouts
 - Creates tension and maintains game pace
+
+### Analytics System
+- Tracks comprehensive game statistics:
+  - Games played and won
+  - Which numbers are hardest to guess
+  - Most common guesses made by players
+  - Player performance statistics (win rates, best games)
+  - Average guesses per game
+- Admin interface to view real-time statistics
+- Helps identify patterns and improve gameplay
+- Accessible via a separate admin client
 
 ### How to Play
 1. Start the server in either single-player or multiplayer mode
@@ -77,10 +89,10 @@ Start the server:
 
 ```bash
 # For single-player mode
-docker run -p 8080:8080 go-code-breaker ./mygame server
+docker run -p 8080:8080 -p 8081:8081 go-code-breaker ./mygame server
 
 # For multiplayer mode (e.g., 2 players)
-docker run -p 8080:8080 go-code-breaker ./mygame server 2
+docker run -p 8080:8080 -p 8081:8081 go-code-breaker ./mygame server 2
 ```
 
 Start a client:
@@ -88,6 +100,11 @@ Start a client:
 ```bash
 docker build -t go-game-client -f Dockerfile.client .
 docker run go-game-client
+```
+
+Start the admin client:
+```bash
+go run admin_client.go localhost:8081
 ```
 
 ---
@@ -185,11 +202,14 @@ git push origin YOURNAME_SURNAME
 # Start in single-player mode
 go run main.go server
 
-# or Start in multiplayer mode with custom number of players (e.g., 3 players)
-go run main.go server 3
+# or Start in multiplayer mode with custom number of players (e.g., 2 players)
+go run main.go server 2
 
 # Connect as a client (local mode requires providing the address explicitly)
 go run main.go client localhost:8080
+
+# Access analytics (admin interface)
+go run admin_client.go localhost:8081
 ```
 
 ### Game Rules
@@ -212,6 +232,25 @@ go run main.go client localhost:8080
    - Asks if players want to play again
 
 5. Players can exit any time by typing "exit"
+
+### Admin Interface
+
+The game includes an admin interface to view analytics:
+
+1. Start the admin client:
+   ```bash
+   go run admin_client.go localhost:8081
+   ```
+
+2. Available commands:
+   - `stats` - Display comprehensive game statistics
+   - `exit` - Exit the admin client
+
+3. Analytics provided:
+   - Overall statistics (games played, win rates, average guesses)
+   - Hardest numbers to guess
+   - Most common player guesses
+   - Top players by win rate
 
 ---
 
@@ -260,6 +299,49 @@ Waiting for Player 2 to make a guess...
 It's your turn. Enter your guess:
 > 5678
 [...continues until correct guess...]
+```
+
+### Admin Interface
+```
+Code Breaker Admin Client
+========================
+Available commands:
+  stats - Display game statistics
+  exit - Exit the admin client
+
+Enter command: stats
+
+=== CODE BREAKER GAME ANALYTICS ===
+
+OVERALL STATISTICS:
+Games Played: 27
+Games Won: 18 (66.7%)
+Average Guesses Per Game: 8.42
+Average Guesses Per Win: 7.83
+Total Unique Players: 12
+Average Players Per Game: 1.78
+Average Game Duration: 4m27s
+
+TOP 5 HARDEST NUMBERS TO GUESS:
+1. Number 7777 - 16.33 guesses on average (appeared 3 times)
+2. Number 9000 - 12.50 guesses on average (appeared 2 times)
+3. Number 4321 - 9.25 guesses on average (appeared 4 times)
+4. Number 2468 - 7.67 guesses on average (appeared 3 times)
+5. Number 5678 - 6.50 guesses on average (appeared 2 times)
+
+TOP 5 MOST COMMON GUESSES:
+1. 1234 - guessed 42 times
+2. 5678 - guessed 27 times
+3. 1111 - guessed 18 times
+4. 9999 - guessed 15 times
+5. 0000 - guessed 12 times
+
+TOP 5 PLAYERS BY WIN RATE:
+1. Player 3 - 83.3% win rate (5 wins)
+2. Player 1 - 71.4% win rate (10 wins)
+3. Player 5 - 50.0% win rate (2 wins)
+4. Player 2 - 25.0% win rate (1 win)
+5. Player 4 - 0.0% win rate (0 wins)
 ```
 
 ---

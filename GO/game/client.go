@@ -39,33 +39,33 @@ func StartClient(address string) error {
 			}
 
 			message := string(buffer[:n])
-			
+
 			// Check for game over condition
 			if message == "GAME_OVER" {
 				gameOver = true
 				continue // Continue to read the next message (play again prompt)
 			}
-			
+
 			// Check if it's this player's turn
 			if strings.Contains(message, "It's your turn") {
 				isMyTurn = true
-			} else if strings.Contains(message, "Waiting for") || 
-                     strings.Contains(message, "ran out of time") ||
-                     strings.Contains(message, "turn is forfeited") {
+			} else if strings.Contains(message, "Waiting for") ||
+				strings.Contains(message, "ran out of time") ||
+				strings.Contains(message, "turn is forfeited") {
 				isMyTurn = false
 			}
-			
+
 			// Add visual indicator for time-based messages
-			if strings.Contains(message, "Time's up!") || 
-               strings.Contains(message, "ran out of time") {
+			if strings.Contains(message, "Time's up!") ||
+				strings.Contains(message, "ran out of time") {
 				message = "\n⏰ " + message
 			}
-			
+
 			// Add visual indicator for time limit information
 			if strings.Contains(message, "seconds to make") {
 				message = "⏱️ " + message
 			}
-			
+
 			serverMessages <- message
 		}
 	}()
@@ -77,18 +77,18 @@ func StartClient(address string) error {
 			return err
 		case message := <-serverMessages:
 			fmt.Println(message)
-			
+
 			// Check if it's this player's turn or a prompt requiring input
-			if (isMyTurn && strings.Contains(message, "your turn")) || 
-			   strings.Contains(message, "Try again:") ||
-			   strings.Contains(message, "play again") {
+			if (isMyTurn && strings.Contains(message, "your turn")) ||
+				strings.Contains(message, "Try again:") ||
+				strings.Contains(message, "play again") {
 				var userInput string
-				
+
 				// Check if this is a time-based prompt
 				if strings.Contains(message, "Time's up!") {
 					fmt.Println("⚠️ You ran out of time on your previous turn!")
 				}
-				
+
 				// For play again prompt
 				if strings.Contains(message, "play again") {
 					fmt.Print("Enter 'yes' to play again or 'no' to quit: ")
@@ -96,25 +96,25 @@ func StartClient(address string) error {
 					// Regular guess prompt
 					fmt.Print("Enter your guess (4 digits) or 'exit' to quit: ")
 				}
-				
+
 				userInput, err = reader.ReadString('\n')
 				if err != nil {
 					return fmt.Errorf("error reading input: %v", err)
 				}
 				userInput = strings.TrimSpace(userInput)
-				
+
 				// Handle exit command
 				if userInput == "exit" && !gameOver {
 					fmt.Println("Exiting the game.")
 					return nil
 				}
-				
+
 				// Send input to server
 				_, err = conn.Write([]byte(userInput))
 				if err != nil {
 					return fmt.Errorf("error sending message to server: %v", err)
 				}
-				
+
 				// After sending input, it's no longer this player's turn
 				isMyTurn = false
 			}

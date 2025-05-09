@@ -8,6 +8,7 @@ services:
     container_name: game-server
     ports:
       - "8080:8080"
+      - "8081:8081"
     command: ["./mygame", "server"]
 
   client1:
